@@ -3,15 +3,15 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python=3.11
   - tornado
-  - traitlets
   - ipykernel
-  - notebook
-  - nbconvert
-  - jupyterlab
   - nbclassic
+  - jupyterlab
+  - notebook
   - jupyter_server
-  - ipywidgets
   - jupyterlab_server
+  - nbconvert
+  - ipywidgets
+  - python=3.11
+  - traitlets
 prefix: /home/mrbarinubuntu/miniconda/envs/nanogpt
