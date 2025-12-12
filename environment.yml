@@ -1,4 +1,4 @@
-name: makemore
+name: nanogpt
 channels:
   - conda-forge
   - nvidia
