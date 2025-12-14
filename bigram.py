@@ -87,27 +87,33 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        #linear algebra speaking, linear transformation
+        self.projection = nn.Linear(n_embd, n_embd)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.projection(out)
+        return out
 
 #Multi Layer Perceptron
 class FeedFoward(nn.Module):
-    ""a simple linear layer followed by non-linearity """
+    """a simple linear layer followed by non-linearity """
 
     def __init__(self, n_embd):
-       super().__init__()
+        super().__init__()
         self.net = nn.Sequential(
-            nn.Liner(n_embd, n_embd),
-            nn.ReLU()
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
         )
-
+        
     def forward(self, x):
         return self.net(x)
 
 class Block(nn.Module):
 
     def __init__(self, n_embd, n_head):
+        super().__init__()
         #n_embd = embedding dimmension, n_head = the number of heads we'd like
         head_size = n_embd // n_head
         #communication
@@ -116,8 +122,9 @@ class Block(nn.Module):
         self.feedforward = FeedFoward(n_embd)
 
     def forward(self, x):
-        x = self.self_attention(x)
-        x = self.feedforward(x)
+        #implementation of residual connections, 
+        x = x + self.self_attention(x)
+        x = x + self.feedforward(x)
         return x
 
         
@@ -128,8 +135,13 @@ class BigramLanguageModel(nn.Module):
         #each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.sa_heads = MultiHeadAttention(4, n_embd // 4) #i.e. heads of 8-dimensional self-attention
-        self.feedforward = FeedFoward(n_embd)
+        #self.sa_heads = MultiHeadAttention(4, n_embd // 4) #i.e. heads of 8-dimensional self-attention
+        #self.feedforward = FeedFoward(n_embd)
+        self.blocks = nn.Sequential(
+            Block(n_embd, n_head=4),
+            Block(n_embd, n_head=4),
+            Block(n_embd, n_head=4),
+        )
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
         
@@ -139,9 +151,10 @@ class BigramLanguageModel(nn.Module):
         token_embd = self.token_embedding_table(idx) #(Batch,Time,Channel)
         pos_embd = self.position_embedding_table(torch.arange(T, device = device))
         x = token_embd + pos_embd #you can check this https://www.youtube.com/watch?v=eMlx5fFNoYc&list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi&index=7 
-        x = self.sa_heads(x) #apply one head of self 
+        #x = self.sa_heads(x) #apply one head of self 
         #nutshell: self-attention communicate data between token, and then it had to think for them self, that's why the MLP for each 'x'
-        x = self.feedforward(x)
+        #x = self.feedforward(x)
+        x = self.blocks(x)
         logits = self.lm_head(x) #(B, T, vocab_size)
         
         if targets is None:
