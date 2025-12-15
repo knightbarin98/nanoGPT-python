@@ -3,14 +3,17 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 #hyperparameters
-batch_size = 32 #how many independent sequences will we process parallel
-block_size = 8 #what is the maximum context size for predictions?
+batch_size = 64 #how many independent sequences will we process parallel
+block_size = 256 #what is the maximum context size for predictions?
 max_iters = 5000
 eval_interval = 500
-learning_rate = 1e-3
+learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
-n_embd = 32
+n_embd = 384
+n_head = 6
+n_layers = 6
+dropout = 0.2
 # ------------------------
 
 torch.manual_seed(1337)
@@ -67,6 +70,8 @@ class Head(nn.Module):
         #tril to become like a global function for all heads it's register as buffer
         #it's not a parameter
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self,x):
         B, T, C = x.shape
@@ -76,6 +81,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * C**-0.5 #(B,T,C) @ (B, C, T) --> (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1) #(B, T, T)
+        wei = self.dropout(wei)
         #perform the weighted aggregation
         v = self.value(x)
         out = wei @ v # (B, T, T) @ (B, T, C) ---> (B, T, C)
@@ -89,10 +95,12 @@ class MultiHeadAttention(nn.Module):
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         #linear algebra speaking, linear transformation
         self.projection = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         out = self.projection(out)
+        out = self.dropout(out)
         return out
 
 #Multi Layer Perceptron
@@ -105,6 +113,7 @@ class FeedFoward(nn.Module):
             nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout)
         )
         
     def forward(self, x):
@@ -120,11 +129,15 @@ class Block(nn.Module):
         self.self_attention = MultiHeadAttention(n_head, head_size)
         #computation
         self.feedforward = FeedFoward(n_embd)
+        #initialization using normalization
+        self.layernorm1 = nn.LayerNorm(n_embd)
+        self.layernorm2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        #implementation of residual connections, 
-        x = x + self.self_attention(x)
-        x = x + self.feedforward(x)
+        #implementation of residual connections, that's why we sum x = x + ...
+        #we implement normalization in front of each before starting
+        x = x + self.self_attention(self.layernorm1(x))
+        x = x + self.feedforward(self.layernorm2(x))
         return x
 
         
@@ -137,11 +150,14 @@ class BigramLanguageModel(nn.Module):
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         #self.sa_heads = MultiHeadAttention(4, n_embd // 4) #i.e. heads of 8-dimensional self-attention
         #self.feedforward = FeedFoward(n_embd)
-        self.blocks = nn.Sequential(
-            Block(n_embd, n_head=4),
-            Block(n_embd, n_head=4),
-            Block(n_embd, n_head=4),
-        )
+        #self.blocks = nn.Sequential(
+        #    Block(n_embd, n_head=4),
+        #    Block(n_embd, n_head=4),
+        #    Block(n_embd, n_head=4),
+        #    nn.LayerNorm(n_embd)
+        #)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layers)])
+        self.layernorm_final = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
         
@@ -155,6 +171,7 @@ class BigramLanguageModel(nn.Module):
         #nutshell: self-attention communicate data between token, and then it had to think for them self, that's why the MLP for each 'x'
         #x = self.feedforward(x)
         x = self.blocks(x)
+        x = self.layernorm_final(x)
         logits = self.lm_head(x) #(B, T, vocab_size)
         
         if targets is None:
@@ -185,6 +202,7 @@ class BigramLanguageModel(nn.Module):
 
 model = BigramLanguageModel()
 m = model.to(device)
+print(sum(p.numel() for in m.parameters())/1e6, 'M parameters')
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 
